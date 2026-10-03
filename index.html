@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Учёт продаж</title>
+<style>
+:root{--bg:#f4f6f9;--card:#fff;--text:#1d2733;--muted:#6b7785;--line:#dde3ea;--accent:#1f4e78;--accent-t:#fff;--in-bg:#fff8dc;--in-t:#1a3fd0;--bad:#c00000;--bad-bg:#ffd9de;--ok:#1a7f37}
+@media(prefers-color-scheme:dark){:root{--bg:#12171d;--card:#1b222b;--text:#e6ebf1;--muted:#93a0ae;--line:#2c3743;--accent:#4a90c8;--accent-t:#0b1118;--in-bg:#2b2a1a;--in-t:#8fb2ff;--bad:#ff8a93;--bad-bg:#4a2227;--ok:#5fd07f}}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)}
+header{background:var(--card);border-bottom:1px solid var(--line);padding:12px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:5}
+h1{font-size:18px;margin:0}
+nav{display:flex;flex-wrap:wrap;gap:4px}
+nav button,.btn{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--text);padding:7px 12px;border-radius:6px;cursor:pointer}
+nav button.active,.btn.primary{background:var(--accent);color:var(--accent-t);border-color:var(--accent)}
+main{padding:16px;max-width:1300px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:16px}
+.card h2{font-size:16px;margin:0 0 10px}
+.tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+.wrap{overflow:auto;max-height:70vh;border:1px solid var(--line);border-radius:6px}
+table{border-collapse:collapse;width:100%;min-width:600px}
+th{position:sticky;top:0;background:var(--accent);color:var(--accent-t);padding:7px 8px;text-align:center;font-weight:bold;white-space:nowrap;z-index:1}
+td{border:1px solid var(--line);padding:0}
+td.c{padding:6px 8px;white-space:nowrap}
+td.num,td.c.num{text-align:right}
+td input,td select{width:100%;min-width:70px;border:0;background:var(--in-bg);color:var(--in-t);padding:6px 8px;font:inherit}
+td input[type=number]{text-align:right}
+.del{border:0;background:none;color:var(--muted);cursor:pointer;font-size:16px;padding:4px 8px}
+.bad{color:var(--bad);background:var(--bad-bg);font-weight:bold}
+.muted{color:var(--muted)}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:16px}
+.kpi div{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px}
+.kpi b{display:block;font-size:20px;margin-top:2px}
+label{font-weight:bold}
+.in{background:var(--in-bg);color:var(--in-t);border:1px solid var(--line);border-radius:4px;padding:6px 8px;font:inherit}
+textarea.in{width:100%;min-height:54px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:800px){.grid2{grid-template-columns:1fr}}
+.bar{fill:var(--accent)}
+svg text{fill:var(--muted);font:11px Arial}
+#invoice{max-width:760px;margin:0 auto}
+#invoice table{min-width:0}
+#invoice td.c,#invoice th{padding:7px 10px}
+#invoice .meta{display:grid;grid-template-columns:120px 1fr;gap:6px 12px;margin:12px 0}
+.hidden{display:none}
+.print-only{display:none}
+@media print{
+  body{background:#fff;color:#000}
+  header,nav,.tools,.noprint{display:none!important}
+  main{padding:0}.card{border:0;padding:0}
+  section:not(#t-invoice){display:none!important}
+  th{background:#ddd!important;color:#000!important}
+  .in{border:0;background:none;color:#000}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Учёт продаж</h1>
+  <nav id="nav"></nav>
+  <div class="tools" style="margin:0">
+    <button class="btn" id="btnExport">Сохранить в файл</button>
+    <button class="btn" id="btnImport">Загрузить из файла</button>
+    <button class="btn" id="btnDemo">Демо-данные</button>
+    <button class="btn" id="btnClear">Очистить всё</button>
+    <input type="file" id="file" accept=".json" class="hidden">
+  </div>
+</header>
+<main>
+  <section id="t-help"></section>
+  <section id="t-sales" class="hidden"></section>
+  <section id="t-goods" class="hidden"></section>
+  <section id="t-arrivals" class="hidden"></section>
+  <section id="t-clients" class="hidden"></section>
+  <section id="t-report" class="hidden"></section>
+  <section id="t-invoice" class="hidden"></section>
+</main>
+
+<script>
+'use strict';
+const KEY = 'uchet_prodazh_v1';
+const fmtMoney = n => (Math.round(n||0)).toLocaleString('ru-RU') + ' ₸';
+const fmtNum = n => (n||0).toLocaleString('ru-RU');
+const fmtDate = s => s ? s.split('-').reverse().join('.') : '';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+
+const demo = () => ({
+  goods: [
+    {sku:'A-001',name:'Товар 1',price:15000,cost:9000,start:50,min:10},
+    {sku:'B-002',name:'Товар 2',price:8500,cost:5000,start:30,min:10},
+    {sku:'C-003',name:'Товар 3',price:25000,cost:15000,start:20,min:5},
+    {sku:'D-004',name:'Товар 4',price:4000,cost:2500,start:100,min:20}],
+  clients: [
+    {name:'ТОО «Альфа»',phone:'+7 701 111 22 33',email:'info@alfa.kz',details:'БИН 123456789012, г. Астана, пр. Республики 1'},
+    {name:'ИП Сергеев',phone:'+7 702 222 33 44',email:'sergeev@mail.kz',details:'ИИН 800101300123, г. Астана, ул. Кенесары 10'},
+    {name:'ТОО «Бета»',phone:'+7 707 333 44 55',email:'office@beta.kz',details:'БИН 210987654321, г. Алматы, ул. Абая 5'}],
+  arrivals: [
+    {date:'2026-01-10',sku:'A-001',qty:20,note:'Поставщик 1'},
+    {date:'2026-02-05',sku:'C-003',qty:10,note:'Поставщик 2'},
+    {date:'2026-03-12',sku:'D-004',qty:50,note:'Поставщик 1'}],
+  sales: [
+    {date:'2026-01-15',inv:'1001',client:'ТОО «Альфа»',sku:'A-001',qty:10},
+    {date:'2026-01-15',inv:'1001',client:'ТОО «Альфа»',sku:'B-002',qty:5},
+    {date:'2026-02-03',inv:'1002',client:'ИП Сергеев',sku:'A-001',qty:10},
+    {date:'2026-02-20',inv:'1003',client:'ТОО «Бета»',sku:'C-003',qty:8},
+    {date:'2026-03-14',inv:'1004',client:'ТОО «Альфа»',sku:'C-003',qty:6},
+    {date:'2026-04-02',inv:'1005',client:'ИП Сергеев',sku:'D-004',qty:40},
+    {date:'2026-05-18',inv:'1006',client:'ТОО «Бета»',sku:'B-002',qty:12},
+    {date:'2026-06-09',inv:'1007',client:'ТОО «Альфа»',sku:'D-004',qty:25}],
+  year: 2026, invoiceNo: '1001',
+  supplier: 'ТОО «Моя компания», БИН 000000000000, г. Астана, ул. Примерная 1, р/с KZ00 0000 0000 0000 0000'
+});
+const empty = () => ({goods:[],clients:[],arrivals:[],sales:[],year:new Date().getFullYear(),invoiceNo:'',supplier:''});
+
+let S;
+try { S = JSON.parse(localStorage.getItem(KEY)) || demo(); } catch { S = demo(); }
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
+
+// ---------- расчёты ----------
+function calc() {
+  const gm = {}; S.goods.forEach(g => { if (g.sku) gm[g.sku] = g; });
+  const seen = {};
+  const sales = S.sales.map(s => {
+    const g = gm[s.sku], q = +s.qty || 0;
+    const price = g ? +g.price || 0 : 0, cost = g ? +g.cost || 0 : 0;
+    const sum = q * price, cst = q * cost;
+    const pos = s.inv ? (seen[s.inv] = (seen[s.inv] || 0) + 1) : 0;
+    const d = s.date ? new Date(s.date) : null;
+    return {...s, name: s.sku ? (g ? g.name : 'нет в справочнике') : '', price, sum, cost: cst, profit: sum - cst,
+      month: d ? d.getUTCMonth() + 1 : 0, year: d ? d.getUTCFullYear() : 0, pos};
+  });
+  const goods = S.goods.map(g => {
+    const inc = S.arrivals.filter(a => a.sku === g.sku).reduce((t, a) => t + (+a.qty || 0), 0);
+    const sold = S.sales.filter(a => a.sku === g.sku).reduce((t, a) => t + (+a.qty || 0), 0);
+    const left = (+g.start || 0) + inc - sold;
+    return {...g, inc, sold, left, status: left <= (+g.min || 0) ? 'Заказать' : 'ОК'};
+  });
+  const clients = S.clients.map(c => {
+    const own = sales.filter(s => s.client === c.name);
+    const last = own.reduce((m, s) => s.date > m ? s.date : m, '');
+    return {...c, total: own.reduce((t, s) => t + s.sum, 0), last};
+  });
+  return {sales, goods, clients};
+}
+
+// ---------- универсальная редактируемая таблица ----------
+// cols: {k,label,type,opts,calc,fmt,cls}
+function tableHTML(name, cols, rows, computed) {
+  let h = '<table><thead><tr>' + cols.map(c => `<th>${c.label}</th>`).join('') + '<th></th></tr></thead><tbody>';
+  rows.forEach((r, i) => {
+    h += '<tr>' + cols.map(c => {
+      if (c.calc) {
+        const v = computed[i][c.k];
+        const f = c.fmt ? c.fmt(v, computed[i]) : (v ?? '');
+        const cls = c.cls ? c.cls(v, computed[i]) : '';
+        return `<td class="c ${c.num ? 'num' : ''} ${cls}">${esc(f)}</td>`;
+      }
+      const v = r[c.k] ?? '';
+      if (c.type === 'select') {
+        const opts = c.opts();
+        return `<td><select data-t="${name}" data-i="${i}" data-k="${c.k}"><option value=""></option>${opts.map(o => `<option ${o === v ? 'selected' : ''}>${esc(o)}</option>`).join('')}${v && !opts.includes(v) ? `<option selected>${esc(v)}</option>` : ''}</select></td>`;
+      }
+      return `<td><input data-t="${name}" data-i="${i}" data-k="${c.k}" type="${c.type || 'text'}" value="${esc(v)}" ${c.type === 'number' ? 'step="any"' : ''}></td>`;
+    }).join('') + `<td><button class="del" data-del="${name}" data-i="${i}" title="Удалить строку">✕</button></td></tr>`;
+  });
+  return h + '</tbody></table>';
+}
+
+const views = {};
+function editable(id, title, name, cols, blank, extra) {
+  views[id] = () => {
+    const C = calc();
+    const computed = C[extra.computedKey];
+    const q = (editable.q[id] || '').toLowerCase();
+    let rows = S[name].map((r, i) => i);
+    if (q) rows = rows.filter(i => JSON.stringify([S[name][i], computed[i]]).toLowerCase().includes(q));
+    const sub = rows.map(i => S[name][i]), subC = rows.map(i => computed[i]);
+    const el = document.getElementById('t-' + id);
+    el.innerHTML = `<div class="card"><h2>${title}</h2>${extra.note ? `<p class="muted">${extra.note}</p>` : ''}
+      <div class="tools"><button class="btn primary" data-add="${name}">+ Добавить строку</button>
+      <input class="in" placeholder="Поиск…" data-q="${id}" value="${esc(editable.q[id] || '')}"><span class="muted">Строк: ${S[name].length}</span></div>
+      <div class="wrap">${tableHTML(name, cols, sub.map((r, j) => Object.assign(Object.create(r), r, {__i: rows[j]})), subC)}</div></div>`;
+    // индексы строк должны указывать на исходный массив
+    el.querySelectorAll('[data-i]').forEach(n => n.dataset.i = rows[+n.dataset.i]);
+    const f = el.querySelector('[data-q]'); if (editable.focusQ === id) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); }
+  };
+  editable.blank = editable.blank || {}; editable.blank[name] = blank;
+}
+editable.q = {};
+
+const skuOpts = () => S.goods.map(g => g.sku).filter(Boolean);
+const clientOpts = () => S.clients.map(c => c.name).filter(Boolean);
+
+editable('sales', 'Журнал продаж', 'sales', [
+  {k:'date',label:'Дата',type:'date'},{k:'inv',label:'№ счёта'},
+  {k:'client',label:'Клиент',type:'select',opts:clientOpts},{k:'sku',label:'Артикул',type:'select',opts:skuOpts},
+  {k:'qty',label:'Кол-во',type:'number'},
+  {k:'name',label:'Название',calc:1},{k:'price',label:'Цена',calc:1,num:1,fmt:fmtMoney},
+  {k:'sum',label:'Сумма',calc:1,num:1,fmt:fmtMoney},{k:'cost',label:'Себестоимость',calc:1,num:1,fmt:fmtMoney},
+  {k:'profit',label:'Прибыль',calc:1,num:1,fmt:fmtMoney}
+], {date:new Date().toISOString().slice(0,10),inv:'',client:'',sku:'',qty:1}, {computedKey:'sales',
+  note:'Вводите только жёлтые поля: дата, № счёта, клиент, артикул, количество. Остальное считается автоматически. Строки с одинаковым № счёта попадут в один счёт.'});
+
+editable('goods', 'Товары и остатки', 'goods', [
+  {k:'sku',label:'Артикул'},{k:'name',label:'Название'},{k:'price',label:'Цена продажи',type:'number'},
+  {k:'cost',label:'Закупочная цена',type:'number'},{k:'start',label:'Начальный остаток',type:'number'},{k:'min',label:'Мин. остаток',type:'number'},
+  {k:'inc',label:'Приход',calc:1,num:1,fmt:fmtNum},{k:'sold',label:'Продано',calc:1,num:1,fmt:fmtNum},
+  {k:'left',label:'Остаток',calc:1,num:1,fmt:fmtNum},
+  {k:'status',label:'Статус',calc:1,cls:v => v === 'Заказать' ? 'bad' : ''}
+], {sku:'',name:'',price:0,cost:0,start:0,min:0}, {computedKey:'goods',
+  note:'Остаток = начальный остаток + приход − продано. Статус «Заказать», если остаток ≤ минимального. При смене цены пересчитываются и прошлые продажи.'});
+
+editable('arrivals', 'Приход товара', 'arrivals', [
+  {k:'date',label:'Дата',type:'date'},{k:'sku',label:'Артикул',type:'select',opts:skuOpts},
+  {k:'qty',label:'Количество',type:'number'},{k:'note',label:'Поставщик / комментарий'}
+], {date:new Date().toISOString().slice(0,10),sku:'',qty:1,note:''}, {computedKey:'arrivals', note:'Приход автоматически учитывается в остатках.'});
+
+editable('clients', 'Клиенты', 'clients', [
+  {k:'name',label:'Клиент'},{k:'phone',label:'Телефон'},{k:'email',label:'Email'},{k:'details',label:'Реквизиты / адрес'},
+  {k:'total',label:'Сумма покупок',calc:1,num:1,fmt:fmtMoney},{k:'last',label:'Последняя покупка',calc:1,fmt:fmtDate}
+], {name:'',phone:'',email:'',details:''}, {computedKey:'clients', note:'Реквизиты клиента подставляются в счёт.'});
+
+// у прихода вычисляемых колонок нет — computed берём по длине массива
+const _arrCalc = calc;
+
+// ---------- отчёт ----------
+views.report = () => {
+  const C = calc(), y = +S.year;
+  const ys = C.sales.filter(s => s.year === y);
+  const mrows = MONTHS.map((m, i) => {
+    const ms = ys.filter(s => s.month === i + 1);
+    const rev = ms.reduce((t, s) => t + s.sum, 0), pr = ms.reduce((t, s) => t + s.profit, 0);
+    return {m, rev, pr, n: ms.length, margin: rev ? pr / rev : 0};
+  });
+  const tot = mrows.reduce((a, r) => ({rev:a.rev+r.rev, pr:a.pr+r.pr, n:a.n+r.n}), {rev:0, pr:0, n:0});
+  const max = Math.max(...mrows.map(r => r.rev), 1);
+  const bw = 40, W = 12 * bw + 60, H = 220;
+  const bars = mrows.map((r, i) => {
+    const h = Math.round(r.rev / max * 160);
+    return `<rect class="bar" x="${50 + i * bw + 6}" y="${190 - h}" width="${bw - 12}" height="${h}" rx="2"><title>${r.m}: ${fmtMoney(r.rev)}</title></rect>
+      <text x="${50 + i * bw + bw / 2}" y="206" text-anchor="middle">${r.m.slice(0, 3)}</text>`;
+  }).join('');
+  const goodsR = S.goods.filter(g => g.sku).map(g => {
+    const gs = ys.filter(s => s.sku === g.sku);
+    return {sku:g.sku, name:g.name, qty:gs.reduce((t,s)=>t+(+s.qty||0),0), rev:gs.reduce((t,s)=>t+s.sum,0), pr:gs.reduce((t,s)=>t+s.profit,0)};
+  });
+  const rank = (arr, k) => arr.forEach(r => r.place = 1 + arr.filter(o => o[k] > r[k]).length);
+  rank(goodsR, 'rev');
+  const clientsR = S.clients.filter(c => c.name).map(c => {
+    const cs = ys.filter(s => s.client === c.name);
+    return {name:c.name, n:cs.length, rev:cs.reduce((t,s)=>t+s.sum,0)};
+  });
+  rank(clientsR, 'rev');
+  document.getElementById('t-report').innerHTML = `
+    <div class="tools"><label>Год:</label><input class="in" type="number" id="year" value="${y}" style="width:100px"></div>
+    <div class="kpi"><div>Выручка<b>${fmtMoney(tot.rev)}</b></div><div>Прибыль<b>${fmtMoney(tot.pr)}</b></div>
+      <div>Маржа<b>${(tot.rev ? tot.pr / tot.rev * 100 : 0).toFixed(1)}%</b></div><div>Позиций<b>${tot.n}</b></div></div>
+    <div class="grid2">
+      <div class="card"><h2>По месяцам</h2><div class="wrap"><table><thead><tr><th>Месяц</th><th>Выручка</th><th>Прибыль</th><th>Позиций</th><th>Маржа</th></tr></thead><tbody>
+        ${mrows.map(r => `<tr><td class="c">${r.m}</td><td class="c num">${fmtMoney(r.rev)}</td><td class="c num">${fmtMoney(r.pr)}</td><td class="c num">${r.n}</td><td class="c num">${(r.margin*100).toFixed(1)}%</td></tr>`).join('')}
+        <tr><td class="c"><b>Итого</b></td><td class="c num"><b>${fmtMoney(tot.rev)}</b></td><td class="c num"><b>${fmtMoney(tot.pr)}</b></td><td class="c num"><b>${tot.n}</b></td><td class="c num"><b>${(tot.rev?tot.pr/tot.rev*100:0).toFixed(1)}%</b></td></tr></tbody></table></div></div>
+      <div class="card"><h2>Выручка по месяцам</h2><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Выручка по месяцам">
+        <line x1="50" y1="190" x2="${W}" y2="190" stroke="currentColor" opacity=".3"/>
+        <text x="46" y="34" text-anchor="end">${fmtNum(max)}</text><text x="46" y="190" text-anchor="end">0</text>${bars}</svg></div>
+    </div>
+    <div class="grid2">
+      <div class="card"><h2>По товарам</h2><div class="wrap"><table><thead><tr><th>Артикул</th><th>Название</th><th>Шт.</th><th>Выручка</th><th>Прибыль</th><th>Место</th></tr></thead><tbody>
+        ${goodsR.map(r => `<tr><td class="c">${esc(r.sku)}</td><td class="c">${esc(r.name)}</td><td class="c num">${fmtNum(r.qty)}</td><td class="c num">${fmtMoney(r.rev)}</td><td class="c num">${fmtMoney(r.pr)}</td><td class="c num">${r.place}</td></tr>`).join('')}</tbody></table></div></div>
+      <div class="card"><h2>По клиентам</h2><div class="wrap"><table><thead><tr><th>Клиент</th><th>Позиций</th><th>Выручка</th><th>Место</th></tr></thead><tbody>
+        ${clientsR.map(r => `<tr><td class="c">${esc(r.name)}</td><td class="c num">${r.n}</td><td class="c num">${fmtMoney(r.rev)}</td><td class="c num">${r.place}</td></tr>`).join('')}</tbody></table></div></div>
+    </div>`;
+};
+
+// ---------- счёт ----------
+views.invoice = () => {
+  const C = calc();
+  const lines = C.sales.filter(s => s.inv && String(s.inv) === String(S.invoiceNo) && s.sku);
+  const cl = lines.length ? S.clients.find(c => c.name === lines[0].client) : null;
+  const invList = [...new Set(S.sales.map(s => s.inv).filter(Boolean))];
+  const total = lines.reduce((t, s) => t + s.sum, 0);
+  document.getElementById('t-invoice').innerHTML = `
+    <div class="tools noprint"><label>№ счёта:</label>
+      <input class="in" id="invNo" list="invList" value="${esc(S.invoiceNo)}" style="width:140px"><datalist id="invList">${invList.map(i => `<option value="${esc(i)}">`).join('')}</datalist>
+      <button class="btn primary" onclick="window.print()">Печать / PDF</button></div>
+    <div class="card noprint"><label>Реквизиты поставщика (вводятся один раз)</label><textarea class="in" id="supplier">${esc(S.supplier)}</textarea></div>
+    <div class="card" id="invoice"><h2 style="font-size:22px">СЧЁТ НА ОПЛАТУ № ${esc(S.invoiceNo)}</h2>
+      <div class="meta"><b>Дата</b><span>${lines.length ? fmtDate(lines[0].date) : ''}</span>
+        <b>Поставщик</b><span>${esc(S.supplier)}</span>
+        <b>Клиент</b><span>${S.invoiceNo ? (lines.length ? esc(lines[0].client) : '<span class="bad">счёт не найден</span>') : ''}</span>
+        <b>Реквизиты</b><span>${cl ? esc(cl.details) : ''}</span></div>
+      <table><thead><tr><th>№</th><th>Наименование</th><th>Кол-во</th><th>Цена</th><th>Сумма</th></tr></thead><tbody>
+        ${lines.slice(0, 20).map((s, i) => `<tr><td class="c">${i + 1}</td><td class="c" style="white-space:normal">${esc(s.name)}</td><td class="c num">${fmtNum(s.qty)}</td><td class="c num">${fmtMoney(s.price)}</td><td class="c num">${fmtMoney(s.sum)}</td></tr>`).join('')}
+        <tr><td colspan="4" class="c num"><b>Итого:</b></td><td class="c num"><b>${fmtMoney(lines.slice(0,20).reduce((t,s)=>t+s.sum,0))}</b></td></tr></tbody></table>
+      ${lines.length > 20 ? '<p class="bad noprint">В счёт попадают только первые 20 позиций.</p>' : ''}</div>`;
+};
+
+// ---------- инструкция ----------
+views.help = () => {
+  document.getElementById('t-help').innerHTML = `<div class="card"><h2>Как работать</h2>
+  <p>Жёлтые поля с синим текстом вводите вы, остальное считается автоматически. Данные сохраняются в браузере (на этом устройстве).</p>
+  <ol><li><b>Товары</b> — заполните справочник: артикул, название, цены, начальный и минимальный остаток.</li>
+  <li><b>Клиенты</b> — название, телефон, email, реквизиты.</li>
+  <li><b>Приход</b> — вносите поступления товара, остатки обновятся сами.</li>
+  <li><b>Продажи</b> — дата, № счёта, клиент и артикул из списков, количество.</li>
+  <li><b>Отчет</b> — выручка, прибыль, маржа, график, рейтинги за выбранный год.</li>
+  <li><b>Счет</b> — введите номер счёта, проверьте реквизиты поставщика и нажмите «Печать / PDF».</li></ol>
+  <h2>Допущения</h2><ul>
+  <li>Валюта — тенге (₸).</li>
+  <li>Цена берётся из справочника товаров; при её смене пересчитываются и прошлые продажи.</li>
+  <li>Один счёт — несколько строк продаж с одинаковым № счёта, максимум 20 позиций в печатной форме.</li>
+  <li>Чтобы перенести данные на другое устройство или сделать копию, используйте «Сохранить в файл» / «Загрузить из файла».</li>
+  <li>Кнопка «Демо-данные» загружает пример, «Очистить всё» удаляет всё и начинает с чистого листа.</li></ul></div>`;
+};
+
+// ---------- навигация и события ----------
+const TABS = [['help','Инструкция'],['sales','Продажи'],['goods','Товары'],['arrivals','Приход'],['clients','Клиенты'],['report','Отчет'],['invoice','Счет']];
+let tab = localStorage.getItem(KEY + '_tab') || 'sales';
+function show(t) {
+  tab = t; try { localStorage.setItem(KEY + '_tab', t); } catch {}
+  TABS.forEach(([id]) => document.getElementById('t-' + id).classList.toggle('hidden', id !== t));
+  document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+  render();
+}
+function render() {
+  const keep = document.activeElement;
+  if (views[tab]) {
+    // таблица прихода использует вычисления по товарам: сопоставляем длину
+    views[tab]();
+  }
+}
+document.getElementById('nav').innerHTML = TABS.map(([id, l]) => `<button data-tab="${id}">${l}</button>`).join('');
+document.getElementById('nav').onclick = e => { if (e.target.dataset.tab) show(e.target.dataset.tab); };
+
+document.addEventListener('change', e => {
+  const n = e.target;
+  if (n.dataset.t) {
+    const row = S[n.dataset.t][+n.dataset.i], k = n.dataset.k;
+    row[k] = n.type === 'number' ? (n.value === '' ? '' : +n.value) : n.value;
+    // при переименовании артикула/клиента обновляем ссылки в журналах
+    save(); render();
+  } else if (n.id === 'year') { S.year = +n.value || S.year; save(); render(); }
+  else if (n.id === 'invNo') { S.invoiceNo = n.value.trim(); save(); render(); }
+  else if (n.id === 'supplier') { S.supplier = n.value; save(); render(); }
+});
+document.addEventListener('input', e => {
+  if (e.target.dataset.q) {
+    editable.q[e.target.dataset.q] = e.target.value; editable.focusQ = e.target.dataset.q; render(); editable.focusQ = null;
+  }
+});
+document.addEventListener('click', e => {
+  const t = e.target;
+  if (t.dataset.add) { S[t.dataset.add].push({...editable.blank[t.dataset.add]}); save(); render(); }
+  if (t.dataset.del && confirm('Удалить строку?')) { S[t.dataset.del].splice(+t.dataset.i, 1); save(); render(); }
+});
+
+// у приходов нет собственных вычислений — подставляем заглушку, чтобы таблица строилась
+const origCalc = calc;
+calc = function () { const r = origCalc(); r.arrivals = S.arrivals.map(() => ({})); return r; };
+
+document.getElementById('btnExport').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 1)], {type:'application/json'}));
+  a.download = 'uchet_prodazh_' + new Date().toISOString().slice(0, 10) + '.json'; a.click();
+};
+document.getElementById('btnImport').onclick = () => document.getElementById('file').click();
+document.getElementById('file').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  f.text().then(t => { try { const d = JSON.parse(t); if (!d.sales || !d.goods) throw 0; S = Object.assign(empty(), d); save(); render(); } catch { alert('Не удалось прочитать файл'); } });
+  e.target.value = '';
+};
+document.getElementById('btnDemo').onclick = () => { if (confirm('Заменить текущие данные демонстрационными?')) { S = demo(); save(); render(); } };
+document.getElementById('btnClear').onclick = () => { if (confirm('Удалить все данные?')) { S = empty(); save(); render(); } };
+
+show(views[tab] ? tab : 'sales');
+</script>
+</body>
+</html>
