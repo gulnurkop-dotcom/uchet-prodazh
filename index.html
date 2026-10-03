@@ -64,7 +64,7 @@ svg text{fill:var(--muted);font:11px Arial}
     <button class="btn" id="btnImport">Загрузить из файла</button>
     <button class="btn" id="btnDemo">Демо-данные</button>
     <button class="btn" id="btnClear">Очистить всё</button>
-    <input type="file" id="file" accept=".json" class="hidden">
+    <input type="file" id="file" accept=".xlsx" class="hidden">
   </div>
 </header>
 <main>
@@ -77,6 +77,7 @@ svg text{fill:var(--muted);font:11px Arial}
   <section id="t-invoice" class="hidden"></section>
 </main>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 'use strict';
 const KEY = 'uchet_prodazh_v1';
@@ -310,7 +311,7 @@ views.help = () => {
   <li>Валюта — тенге (₸).</li>
   <li>Цена берётся из справочника товаров; при её смене пересчитываются и прошлые продажи.</li>
   <li>Один счёт — несколько строк продаж с одинаковым № счёта, максимум 20 позиций в печатной форме.</li>
-  <li>Чтобы перенести данные на другое устройство или сделать копию, используйте «Сохранить в файл» / «Загрузить из файла».</li>
+  <li>Чтобы перенести данные на другое устройство или сделать копию, используйте «Сохранить в файл» / «Загрузить из файла» (формат xlsx, открывается в Excel).</li>
   <li>Кнопка «Демо-данные» загружает пример, «Очистить всё» удаляет всё и начинает с чистого листа.</li></ul></div>`;
 };
 
@@ -359,16 +360,54 @@ document.addEventListener('click', e => {
 const origCalc = calc;
 calc = function () { const r = origCalc(); r.arrivals = S.arrivals.map(() => ({})); return r; };
 
+// ---- сохранение / загрузка в формате xlsx (библиотека SheetJS) ----
+const SHEETS = {
+  'Продажи': ['sales', [['date','Дата'],['inv','№ счёта'],['client','Клиент'],['sku','Артикул'],['qty','Кол-во']]],
+  'Товары': ['goods', [['sku','Артикул'],['name','Название'],['price','Цена продажи'],['cost','Закупочная цена'],['start','Начальный остаток'],['min','Мин. остаток']]],
+  'Приход': ['arrivals', [['date','Дата'],['sku','Артикул'],['qty','Количество'],['note','Поставщик / комментарий']]],
+  'Клиенты': ['clients', [['name','Клиент'],['phone','Телефон'],['email','Email'],['details','Реквизиты / адрес']]]
+};
 document.getElementById('btnExport').onclick = () => {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 1)], {type:'application/json'}));
-  a.download = 'uchet_prodazh_' + new Date().toISOString().slice(0, 10) + '.json'; a.click();
+  if (!window.XLSX) return alert('Библиотека XLSX не загрузилась (нужен интернет при первом открытии).');
+  const wb = XLSX.utils.book_new(), C = calc();
+  for (const [title, [key, cols]] of Object.entries(SHEETS)) {
+    const rows = S[key].map(r => Object.fromEntries(cols.map(([k, l]) => [l, r[k] ?? ''])));
+    // для удобства чтения добавляем вычисляемые колонки (при загрузке они игнорируются)
+    if (key === 'sales') C.sales.forEach((s, i) => Object.assign(rows[i], {'Название': s.name, 'Цена': s.price, 'Сумма': s.sum, 'Себестоимость': s.cost, 'Прибыль': s.profit}));
+    if (key === 'goods') C.goods.forEach((g, i) => Object.assign(rows[i], {'Приход': g.inc, 'Продано': g.sold, 'Остаток': g.left, 'Статус': g.status}));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows, {header: cols.map(c => c[1])}), title);
+  }
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Параметр','Значение'],['Год отчёта', S.year],['№ счёта', S.invoiceNo],['Реквизиты поставщика', S.supplier]]), 'Настройки');
+  XLSX.writeFile(wb, 'uchet_prodazh_' + new Date().toISOString().slice(0, 10) + '.xlsx');
 };
 document.getElementById('btnImport').onclick = () => document.getElementById('file').click();
 document.getElementById('file').onchange = e => {
-  const f = e.target.files[0]; if (!f) return;
-  f.text().then(t => { try { const d = JSON.parse(t); if (!d.sales || !d.goods) throw 0; S = Object.assign(empty(), d); save(); render(); } catch { alert('Не удалось прочитать файл'); } });
-  e.target.value = '';
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  if (!window.XLSX) return alert('Библиотека XLSX не загрузилась.');
+  f.arrayBuffer().then(buf => {
+    try {
+      const wb = XLSX.read(buf, {type: 'array', cellDates: false, raw: false});
+      const d = empty();
+      for (const [title, [key, cols]] of Object.entries(SHEETS)) {
+        const ws = wb.Sheets[title]; if (!ws) throw 0;
+        d[key] = XLSX.utils.sheet_to_json(ws, {raw: true, defval: ''}).map(r => {
+          const o = {};
+          cols.forEach(([k, l]) => {
+            let v = r[l] ?? '';
+            if (k === 'date' && typeof v === 'number') v = new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 10);
+            if (k === 'date' && typeof v === 'string' && /^dd.dd.d{4}$/.test(v)) v = v.split('.').reverse().join('-');
+            if (k !== 'date' && typeof v === 'number' && ['sku','inv','name','client'].includes(k)) v = String(v);
+            o[k] = v;
+          });
+          return o;
+        }).filter(o => Object.values(o).some(v => v !== ''));
+      }
+      const st = wb.Sheets['Настройки'];
+      if (st) { const m = Object.fromEntries(XLSX.utils.sheet_to_json(st, {header: 1}).map(r => [r[0], r[1]]));
+        d.year = +m['Год отчёта'] || d.year; d.invoiceNo = String(m['№ счёта'] ?? ''); d.supplier = m['Реквизиты поставщика'] ?? ''; }
+      S = d; save(); render();
+    } catch { alert('Не удалось прочитать файл. Нужен xlsx, сохранённый этим приложением.'); }
+  });
 };
 document.getElementById('btnDemo').onclick = () => { if (confirm('Заменить текущие данные демонстрационными?')) { S = demo(); save(); render(); } };
 document.getElementById('btnClear').onclick = () => { if (confirm('Удалить все данные?')) { S = empty(); save(); render(); } };
